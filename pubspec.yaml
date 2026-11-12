@@ -1,0 +1,30 @@
+name: relay_home
+description: Local Wi-Fi pairing and four-channel relay control for ESP8266 boards.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.10.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  esp_smartconfig: ^3.0.0
+  shared_preferences: ^2.5.3
+  path_provider: ^2.1.5
+  image_picker: ^1.2.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/art/
+    - assets/fonts/OFL.txt
+  fonts:
+    - family: Archivo
+      fonts:
+        - asset: assets/fonts/Archivo.ttf

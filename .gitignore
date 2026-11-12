@@ -1,0 +1,31 @@
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+build/
+coverage/
+android/.gradle/
+android/local.properties
+android/key.properties
+android/app/debug/
+android/app/profile/
+android/app/release/
+*.jks
+*.keystore
+.idea/
+*.iml
+# Local deliverables and implementation coordination notes.
+/dist/
+/CONTRACT.md
+
+# Local configuration and secrets.
+.env
+.env.*
+!.env.example
