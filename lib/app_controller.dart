@@ -415,6 +415,19 @@ class AppController extends ChangeNotifier {
     final mode = _demoMode;
     final records = mode ? _demo : _real;
     final normalized = device.copyWith(demo: mode);
+    _ensureUniqueDevice(normalized, mode);
+    final index = records.indexWhere((d) => d.id == device.id);
+    if (index < 0) {
+      records.add(normalized);
+    } else {
+      records[index] = normalized;
+    }
+    await _persist(mode);
+    _notify();
+  }
+
+  void _ensureUniqueDevice(RelayDevice device, bool mode) {
+    final records = mode ? _demo : _real;
     final duplicate = records
         .where(
           (d) =>
@@ -429,14 +442,60 @@ class AppController extends ChangeNotifier {
         'This address or device is already saved as ${duplicate.name}. Edit that device instead.',
       );
     }
-    final index = records.indexWhere((d) => d.id == device.id);
-    if (index < 0) {
-      records.add(normalized);
-    } else {
-      records[index] = normalized;
+  }
+
+  /// Rebinds an existing record after SmartConfig; never replays relay states.
+  Future<RelayDevice> moveDeviceToNetwork(
+    String id,
+    DiscoveredDevice found, {
+    required String ssid,
+  }) async {
+    final mode = _demoMode;
+    if (!found.verified || (!mode && !isPrivateIpv4(found.ip))) {
+      throw StateError('Pair the board before saving its new connection.');
     }
-    await _persist(mode);
-    _notify();
+    if (!mode) {
+      await refreshNetwork();
+      if (_demoMode != mode ||
+          _network?.isWifi != true ||
+          (_network?.ssid != null && _network!.ssid != ssid)) {
+        throw StateError(
+          'Reconnect this phone to “$ssid” and try setup again.',
+        );
+      }
+    }
+    final device = _find(id, mode);
+    if (device == null) throw StateError('This saved board was removed.');
+    if (isDeviceBusy(id)) {
+      throw StateError('Wait for this board’s current command to finish.');
+    }
+    if (device.mac != null &&
+        device.mac!.toLowerCase() != found.mac?.toLowerCase()) {
+      throw StateError(
+        'A different board replied. Put “${device.name}” in pairing mode and try again.',
+      );
+    }
+    final updated = device.copyWith(
+      ip: found.ip,
+      mac: found.mac,
+      reachability: found.reachable
+          ? Reachability.online
+          : Reachability.offline,
+      lastSeen: found.reachable ? DateTime.now() : null,
+    );
+    _ensureUniqueDevice(updated, mode);
+    // Keep the old connection intact if local persistence fails. Read the
+    // current record above so an earlier setup-screen snapshot cannot replace
+    // newer relay names, artwork, or command history.
+    final records = mode ? _demo : _real;
+    await _write(
+      mode ? 'demo_devices_v1' : 'real_devices_v1',
+      encodeDevices([
+        for (final record in records) record.id == id ? updated : record,
+      ]),
+    );
+    _replace(updated, mode);
+    return updated;
   }
 
   Future<void> removeDevice(String id) async {

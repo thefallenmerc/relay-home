@@ -9,10 +9,12 @@ import 'package:relay_home/services/storage_service.dart';
 
 class MemoryStorage implements AppStorage {
   final Map<String, String> values = {};
+  bool failWrites = false;
   @override
   Future<String?> read(String key) async => values[key];
   @override
   Future<void> write(String key, String value) async {
+    if (failWrites) throw StateError('Storage unavailable');
     values[key] = value;
   }
 }
@@ -20,19 +22,20 @@ class MemoryStorage implements AppStorage {
 class FakeNetwork implements NetworkService {
   Completer<void>? snapshotGate, beginGate;
   final beginEntered = Completer<void>();
+  NetworkSnapshot current = const NetworkSnapshot(
+    ssid: 'Test Wi-Fi',
+    ipv4: '192.168.1.2',
+    subnetMask: '255.255.255.0',
+    isWifi: true,
+    permissionGranted: true,
+    frequencyMhz: 2412,
+  );
   @override
   Stream<void> get changes => const Stream.empty();
   @override
   Future<NetworkSnapshot> snapshot({bool requestPermission = false}) async {
     if (requestPermission) await snapshotGate?.future;
-    return const NetworkSnapshot(
-      ssid: 'Test Wi-Fi',
-      ipv4: '192.168.1.2',
-      subnetMask: '255.255.255.0',
-      isWifi: true,
-      permissionGranted: true,
-      frequencyMhz: 2412,
-    );
+    return current;
   }
 
   int begins = 0, ends = 0;
@@ -87,6 +90,14 @@ class FakeTransport implements RelayTransport {
 class FakeProvisioning implements ProvisioningService {
   bool fail = false;
   int calls = 0;
+  Completer<void>? gate;
+  List<DiscoveredDevice> replies = [
+    const DiscoveredDevice(
+      ip: '192.168.1.40',
+      mac: 'aa:bb:cc:dd:ee:ff',
+      verified: true,
+    ),
+  ];
   @override
   Future<List<DiscoveredDevice>> provision({
     required String ssid,
@@ -95,14 +106,9 @@ class FakeProvisioning implements ProvisioningService {
     void Function(PairingStage)? onStage,
   }) async {
     calls++;
+    await gate?.future;
     if (fail) throw TimeoutException('Timed out');
-    return [
-      const DiscoveredDevice(
-        ip: '192.168.1.40',
-        mac: 'aa:bb:cc:dd:ee:ff',
-        verified: true,
-      ),
-    ];
+    return replies;
   }
 
   @override
@@ -147,6 +153,159 @@ void main() {
     expect(controller.devices, isEmpty);
     expect(transport.sends, isEmpty);
   });
+  test(
+    'moving Wi-Fi preserves the existing record and persists only connection changes',
+    () async {
+      final original = fixture().copyWith(
+        mac: 'AA:BB:CC:DD:EE:FF',
+        preset: 'appliance_board',
+        relays: [
+          for (final relay in fixture().relays)
+            relay.copyWith(
+              name: 'Custom ${relay.channel}',
+              preset: 'ceiling_fan',
+              customImagePath: '/private/relay-photo-${relay.channel}.png',
+              lastState: relay.channel < 3,
+              lastSentAt: DateTime.utc(2026, 11, 14),
+              uncertain: relay.channel == 4,
+            ),
+        ],
+      );
+      await controller.saveDevice(original);
+      network.current = const NetworkSnapshot(
+        ssid: 'New home',
+        isWifi: true,
+        ipv4: '192.168.43.2',
+      );
+      final moved = await controller.moveDeviceToNetwork(
+        original.id,
+        const DiscoveredDevice(
+          ip: '192.168.43.18',
+          mac: 'aa:bb:cc:dd:ee:ff',
+          verified: true,
+          reachable: true,
+        ),
+        ssid: 'New home',
+      );
+      expect(controller.devices.length, 1);
+      expect(moved.id, original.id);
+      expect(moved.name, original.name);
+      expect(moved.room, original.room);
+      expect(moved.preset, original.preset);
+      expect(moved.port, original.port);
+      expect(
+        moved.relays.map((r) => r.toJson()).toList(),
+        original.relays.map((r) => r.toJson()).toList(),
+      );
+      expect(moved.reachability, Reachability.online);
+      final reopened = decodeDevices(storage.values['real_devices_v1']).single;
+      expect(reopened.ip, '192.168.43.18');
+      expect(reopened.id, original.id);
+      expect(
+        reopened.relays.map((r) => r.toJson()).toList(),
+        original.relays.map((r) => r.toJson()).toList(),
+      );
+      expect(transport.sends, isEmpty);
+    },
+  );
+  test(
+    'a different board or an unverified scan cannot replace a saved board',
+    () async {
+      final original = fixture().copyWith(mac: 'aa:bb:cc:dd:ee:ff');
+      await controller.saveDevice(original);
+      final before = storage.values['real_devices_v1'];
+      for (final found in [
+        const DiscoveredDevice(
+          ip: '192.168.1.44',
+          mac: 'aa:bb:cc:dd:ee:00',
+          verified: true,
+        ),
+        const DiscoveredDevice(ip: '192.168.1.44', mac: 'aa:bb:cc:dd:ee:ff'),
+      ]) {
+        await expectLater(
+          controller.moveDeviceToNetwork(
+            original.id,
+            found,
+            ssid: 'Test Wi-Fi',
+          ),
+          throwsStateError,
+        );
+      }
+      expect(controller.devices.single.ip, original.ip);
+      expect(storage.values['real_devices_v1'], before);
+      expect(transport.sends, isEmpty);
+    },
+  );
+  test(
+    'failed migration persistence keeps the old connection and history intact',
+    () async {
+      await controller.saveDevice(fixture());
+      final before = storage.values['real_devices_v1'];
+      storage.failWrites = true;
+      await expectLater(
+        controller.moveDeviceToNetwork(
+          'real-board',
+          const DiscoveredDevice(
+            ip: '192.168.1.44',
+            mac: 'aa:bb:cc:dd:ee:ff',
+            verified: true,
+          ),
+          ssid: 'Test Wi-Fi',
+        ),
+        throwsStateError,
+      );
+      expect(controller.devices.single.ip, fixture().ip);
+      expect(controller.devices.single.mac, isNull);
+      expect(storage.values['real_devices_v1'], before);
+    },
+  );
+  test(
+    'migration rejects a changed phone network and duplicate destination',
+    () async {
+      await controller.saveDevice(fixture());
+      const found = DiscoveredDevice(
+        ip: '192.168.1.44',
+        mac: 'aa:bb:cc:dd:ee:ff',
+        verified: true,
+      );
+      await expectLater(
+        controller.moveDeviceToNetwork(
+          'real-board',
+          found,
+          ssid: 'Other Wi-Fi',
+        ),
+        throwsStateError,
+      );
+      await controller.saveDevice(
+        fixture().copyWith(id: 'other-board', ip: found.ip),
+      );
+      await expectLater(
+        controller.moveDeviceToNetwork('real-board', found, ssid: 'Test Wi-Fi'),
+        throwsStateError,
+      );
+      expect(controller.deviceById('real-board')!.ip, fixture().ip);
+      expect(controller.devices.length, 2);
+    },
+  );
+  test(
+    'manual-IP board can adopt a pairing identity without becoming a new device',
+    () async {
+      await controller.saveDevice(fixture());
+      final moved = await controller.moveDeviceToNetwork(
+        'real-board',
+        const DiscoveredDevice(
+          ip: '192.168.1.44',
+          mac: 'aa:bb:cc:dd:ee:ff',
+          verified: true,
+        ),
+        ssid: 'Test Wi-Fi',
+      );
+      expect(moved.mac, 'aa:bb:cc:dd:ee:ff');
+      expect(moved.reachability, Reachability.offline);
+      expect(controller.devices.single.id, 'real-board');
+      expect(transport.sends, isEmpty);
+    },
+  );
   test('saved states restore without automatic command replay', () async {
     await controller.saveDevice(fixture());
     await controller.toggleRelay('real-board', 2, true);
