@@ -277,7 +277,34 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                           ),
                         ),
-                        const Icon(Icons.chevron_right, size: 21),
+                        PopupMenuButton<String>(
+                          tooltip: 'Options for ${device.name}',
+                          enabled: !busy,
+                          icon: const Icon(Icons.more_vert_rounded, size: 22),
+                          onSelected: (action) => Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) => action == 'wifi'
+                                  ? SetupScreen(
+                                      controller: widget.controller,
+                                      reconfigureDevice: device,
+                                    )
+                                  : DeviceScreen(
+                                      controller: widget.controller,
+                                      deviceId: device.id,
+                                    ),
+                            ),
+                          ),
+                          itemBuilder: (_) => const [
+                            PopupMenuItem(
+                              value: 'controls',
+                              child: Text('Open controls'),
+                            ),
+                            PopupMenuItem(
+                              value: 'wifi',
+                              child: Text('Move to current Wi-Fi'),
+                            ),
+                          ],
+                        ),
                       ],
                     ),
                     const SizedBox(height: 6),

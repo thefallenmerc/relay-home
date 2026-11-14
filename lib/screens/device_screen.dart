@@ -284,6 +284,7 @@ class _DeviceScreenState extends State<DeviceScreen> {
           actions: [
             PopupMenuButton<String>(
               tooltip: 'Device options',
+              enabled: !busy,
               onSelected: (action) => _menu(action, device),
               itemBuilder: (_) => const [
                 PopupMenuItem(value: 'edit', child: Text('Edit device')),
@@ -293,7 +294,10 @@ class _DeviceScreenState extends State<DeviceScreen> {
                   value: 'address',
                   child: Text('Update IP address'),
                 ),
-                PopupMenuItem(value: 'wifi', child: Text('Reconfigure Wi-Fi')),
+                PopupMenuItem(
+                  value: 'wifi',
+                  child: Text('Move to current Wi-Fi'),
+                ),
                 PopupMenuDivider(),
                 PopupMenuItem(value: 'remove', child: Text('Remove from app')),
               ],
@@ -446,6 +450,11 @@ class _DeviceScreenState extends State<DeviceScreen> {
               TextButton(
                 onPressed: () => _editAddress(device),
                 child: const Text('Update IP address'),
+              ),
+              TextButton.icon(
+                onPressed: busy ? null : () => _menu('wifi', device),
+                icon: const Icon(Icons.wifi_rounded),
+                label: const Text('Move to current Wi-Fi'),
               ),
             ],
           ],

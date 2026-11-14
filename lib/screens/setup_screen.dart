@@ -6,7 +6,7 @@ import '../widgets/appliance_art.dart';
 import '../widgets/common.dart';
 import 'device_editor.dart';
 
-enum _SetupPage { prepare, wifi, connecting, discovery, results }
+enum _SetupPage { prepare, wifi, connecting, discovery, results, complete }
 
 class SetupScreen extends StatefulWidget {
   const SetupScreen({
@@ -30,7 +30,10 @@ class _SetupScreenState extends State<SetupScreen> {
   bool _showPassword = false,
       _openNetwork = false,
       _busy = false,
-      _networkLoading = false;
+      _networkLoading = false,
+      _savingMove = false;
+  bool get _moving => widget.reconfigureDevice != null;
+  RelayDevice? _movedDevice;
   String? _error;
   List<DiscoveredDevice> _results = [];
   int _elapsed = 0, _checked = 0, _total = 0, _generation = 0;
@@ -60,7 +63,8 @@ class _SetupScreenState extends State<SetupScreen> {
       await widget.controller.refreshNetwork(requestPermission: true);
       if (!mounted) return;
       final detected = widget.controller.network?.ssid;
-      if (detected != null && detected.isNotEmpty && _ssid.text.isEmpty) {
+      if (detected != null && detected.isNotEmpty) {
+        if (_ssid.text != detected) _password.clear();
         _ssid.text = detected;
       }
     } finally {
@@ -106,6 +110,28 @@ class _SetupScreenState extends State<SetupScreen> {
         _results = devices;
         _page = _SetupPage.results;
       });
+      if (_moving) {
+        final saved = widget.controller.deviceById(
+          widget.reconfigureDevice!.id,
+        );
+        final matches = devices
+            .where(
+              (d) =>
+                  saved?.mac != null &&
+                  d.mac?.toLowerCase() == saved!.mac!.toLowerCase(),
+            )
+            .toList();
+        if (matches.length == 1) {
+          await _saveMove(matches.single);
+          return;
+        }
+        if (saved?.mac != null && devices.isNotEmpty && matches.isEmpty) {
+          setState(
+            () => _error =
+                'A different board replied. Put “${saved!.name}” in pairing mode and try again. Your saved board has not changed.',
+          );
+        }
+      }
       if (devices.isEmpty) {
         setState(
           () => _error =
@@ -171,6 +197,7 @@ class _SetupScreenState extends State<SetupScreen> {
   Future<void> _cancel() async {
     _generation++;
     _timer?.cancel();
+    _password.clear();
     widget.controller.cancelDiscovery();
     await widget.controller.cancelProvisioning();
     if (mounted) {
@@ -182,7 +209,35 @@ class _SetupScreenState extends State<SetupScreen> {
     }
   }
 
+  Future<void> _saveMove(DiscoveredDevice found) async {
+    if (_savingMove) return;
+    setState(() {
+      _savingMove = true;
+      _error = null;
+    });
+    try {
+      final saved = await widget.controller.moveDeviceToNetwork(
+        widget.reconfigureDevice!.id,
+        found,
+        ssid: _ssid.text.trim(),
+      );
+      if (!mounted) return;
+      setState(() {
+        _movedDevice = saved;
+        _page = _SetupPage.complete;
+      });
+    } catch (error) {
+      if (mounted) setState(() => _error = _message(error));
+    } finally {
+      if (mounted) setState(() => _savingMove = false);
+    }
+  }
+
   Future<void> _select(DiscoveredDevice found) async {
+    if (_moving) {
+      await _saveMove(found);
+      return;
+    }
     final existingByMac = widget.controller.devices
         .where(
           (d) =>
@@ -330,7 +385,7 @@ class _SetupScreenState extends State<SetupScreen> {
   Widget build(BuildContext context) {
     final c = Theme.of(context).colorScheme;
     return PopScope(
-      canPop: !_busy,
+      canPop: !_busy && !_savingMove,
       onPopInvokedWithResult: (didPop, result) {
         if (!didPop && _busy) _cancel();
       },
@@ -339,18 +394,21 @@ class _SetupScreenState extends State<SetupScreen> {
           leading: IconButton(
             tooltip: 'Back',
             icon: const Icon(Icons.arrow_back_rounded),
-            onPressed: () {
-              if (_busy) {
-                _cancel();
-              } else if (_page != _SetupPage.prepare) {
-                setState(() {
-                  _page = _SetupPage.prepare;
-                  _error = null;
-                });
-              } else {
-                Navigator.of(context).pop();
-              }
-            },
+            onPressed: _savingMove
+                ? null
+                : () {
+                    if (_busy) {
+                      _cancel();
+                    } else if (_page != _SetupPage.prepare &&
+                        _page != _SetupPage.complete) {
+                      setState(() {
+                        _page = _SetupPage.prepare;
+                        _error = null;
+                      });
+                    } else {
+                      Navigator.of(context).pop();
+                    }
+                  },
           ),
           actions: [
             if (widget.controller.demoMode)
@@ -374,6 +432,7 @@ class _SetupScreenState extends State<SetupScreen> {
         body: SafeArea(
           top: false,
           child: ListView(
+            key: ValueKey(_page),
             padding: const EdgeInsets.fromLTRB(24, 14, 24, 28),
             children: switch (_page) {
               _SetupPage.prepare => _prepare(context),
@@ -381,9 +440,22 @@ class _SetupScreenState extends State<SetupScreen> {
               _SetupPage.connecting => _connecting(context),
               _SetupPage.discovery => _discovery(context),
               _SetupPage.results => _resultsPage(context),
+              _SetupPage.complete => _complete(context),
             },
           ),
         ),
+        bottomNavigationBar: _moving && _page == _SetupPage.prepare
+            ? SafeArea(
+                top: false,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 12, 24, 16),
+                  child: FilledButton(
+                    onPressed: _loadNetwork,
+                    child: const Text('Continue'),
+                  ),
+                ),
+              )
+            : null,
       ),
     );
   }
@@ -420,11 +492,11 @@ class _SetupScreenState extends State<SetupScreen> {
   List<Widget> _prepare(BuildContext context) => [
     _heading(
       context,
-      'Set up device · 1 of 3',
-      widget.reconfigureDevice == null
-          ? 'Let’s get your\nboard ready'
-          : 'Reconnect your board',
-      'A few things before you connect.',
+      _moving ? 'Move board · 1 of 3' : 'Set up device · 1 of 3',
+      !_moving ? 'Let’s get your\nboard ready' : 'Move to current Wi-Fi',
+      _moving
+          ? 'Reconnect “${widget.reconfigureDevice!.name}” to the network your phone is using.'
+          : 'A few things before you connect.',
     ),
     const SizedBox(height: 26),
     Container(
@@ -445,12 +517,18 @@ class _SetupScreenState extends State<SetupScreen> {
       'Power on your board',
     ),
     const SizedBox(height: 10),
-    _preparationRow(context, Icons.wifi_rounded, 'Use a 2.4 GHz Wi-Fi network'),
+    _preparationRow(
+      context,
+      Icons.wifi_rounded,
+      _moving
+          ? 'Join the new 2.4 GHz Wi-Fi on your phone'
+          : 'Use a 2.4 GHz Wi-Fi network',
+    ),
     const SizedBox(height: 10),
     _preparationRow(
       context,
       Icons.smartphone_rounded,
-      'Keep your phone nearby',
+      _moving ? 'Put this board in pairing mode' : 'Keep your phone nearby',
     ),
     const SizedBox(height: 22),
     Text(
@@ -460,6 +538,13 @@ class _SetupScreenState extends State<SetupScreen> {
         height: 1.5,
       ),
     ),
+    if (_moving) ...[
+      const SizedBox(height: 16),
+      const InfoPanel(
+        text:
+            'Names, room, icons, and last-set relay states stay saved. Moving Wi-Fi does not send relay On or Off commands.',
+      ),
+    ],
     if (widget.controller.demoMode) ...[
       const SizedBox(height: 16),
       const InfoPanel(
@@ -467,9 +552,17 @@ class _SetupScreenState extends State<SetupScreen> {
       ),
     ],
     const SizedBox(height: 26),
-    FilledButton(onPressed: _loadNetwork, child: const Text('Board is ready')),
-    const SizedBox(height: 8),
-    TextButton(onPressed: _scan, child: const Text('Find an existing device')),
+    if (!_moving) ...[
+      FilledButton(
+        onPressed: _loadNetwork,
+        child: const Text('Board is ready'),
+      ),
+      const SizedBox(height: 8),
+      TextButton(
+        onPressed: _scan,
+        child: const Text('Find an existing device'),
+      ),
+    ],
   ];
 
   Widget _preparationRow(BuildContext context, IconData icon, String label) =>
@@ -499,9 +592,11 @@ class _SetupScreenState extends State<SetupScreen> {
     return [
       _heading(
         context,
-        'Set up device · 2 of 3',
+        _moving ? 'Move board · 2 of 3' : 'Set up device · 2 of 3',
         'Connect to Wi-Fi',
-        'Choose the 2.4 GHz network your board will use.',
+        _moving
+            ? 'Confirm your current network and enter its password to move “${widget.reconfigureDevice!.name}”.'
+            : 'Choose the 2.4 GHz network your board will use.',
       ),
       const SizedBox(height: 16),
       const Center(child: ApplianceArt(preset: 'router', on: true, size: 156)),
@@ -573,12 +668,13 @@ class _SetupScreenState extends State<SetupScreen> {
         warning: wrongBand,
       ),
       if (!_networkLoading &&
-          network?.ssid == null &&
+          (_moving || network?.ssid == null) &&
           !widget.controller.demoMode) ...[
         const SizedBox(height: 12),
-        const Text(
-          'Network name unavailable. Enter it manually, or allow Wi-Fi access and try detecting it again.',
-        ),
+        if (network?.ssid == null)
+          const Text(
+            'Network name unavailable. Enter it manually, or allow Wi-Fi access and try detecting it again.',
+          ),
         TextButton.icon(
           onPressed: _loadNetwork,
           icon: const Icon(Icons.wifi_find_rounded),
@@ -588,7 +684,7 @@ class _SetupScreenState extends State<SetupScreen> {
       const SizedBox(height: 24),
       FilledButton(
         onPressed: _networkLoading ? null : _connect,
-        child: const Text('Connect device'),
+        child: Text(_moving ? 'Move board' : 'Connect device'),
       ),
       const SizedBox(height: 18),
       const Text(
@@ -606,10 +702,12 @@ class _SetupScreenState extends State<SetupScreen> {
     return [
       _heading(
         context,
-        'Set up device · 3 of 3',
+        _moving ? 'Move board · 3 of 3' : 'Set up device · 3 of 3',
         _error == null ? 'Connecting your board' : 'Let’s try that again',
         _error == null
             ? 'Keep this screen open for a moment.'
+            : _moving
+            ? 'Your saved board and relay details are unchanged.'
             : 'Your board has not been added yet.',
       ),
       const SizedBox(height: 34),
@@ -802,9 +900,15 @@ class _SetupScreenState extends State<SetupScreen> {
     _heading(
       context,
       _results.isEmpty ? 'No response' : 'Board found',
-      _results.isEmpty ? 'No board found yet' : 'Your board is on Wi-Fi',
+      _results.isEmpty
+          ? 'No board found yet'
+          : _moving
+          ? 'Select your board'
+          : 'Your board is on Wi-Fi',
       _results.isEmpty
           ? 'Check your network details and pairing mode.'
+          : _moving
+          ? 'Select the board you put in pairing mode to keep using “${widget.reconfigureDevice!.name}”.'
           : 'Choose your board and make it yours.',
     ),
     const SizedBox(height: 22),
@@ -813,6 +917,11 @@ class _SetupScreenState extends State<SetupScreen> {
     if (_error != null) ...[
       InfoPanel(text: _error!, warning: true),
       const SizedBox(height: 16),
+    ],
+    if (_savingMove) ...[
+      const LinearProgressIndicator(),
+      const SizedBox(height: 16),
+      const Text('Saving the new connection…'),
     ],
     ..._results.map((d) => _resultTile(context, d)),
     if (_results.any((d) => !d.reachable)) ...[
@@ -825,10 +934,12 @@ class _SetupScreenState extends State<SetupScreen> {
     ],
     const SizedBox(height: 20),
     TextButton(
-      onPressed: () => setState(() {
-        _page = _SetupPage.wifi;
-        _error = null;
-      }),
+      onPressed: _savingMove
+          ? null
+          : () => setState(() {
+              _page = _SetupPage.wifi;
+              _error = null;
+            }),
       child: const Text('Try setup again'),
     ),
   ];
@@ -838,7 +949,7 @@ class _SetupScreenState extends State<SetupScreen> {
     child: Card(
       child: InkWell(
         borderRadius: BorderRadius.circular(24),
-        onTap: () => _select(result),
+        onTap: _savingMove ? null : () => _select(result),
         child: Padding(
           padding: const EdgeInsets.all(18),
           child: Row(
@@ -879,4 +990,40 @@ class _SetupScreenState extends State<SetupScreen> {
       ),
     ),
   );
+
+  List<Widget> _complete(BuildContext context) {
+    final device = _movedDevice!;
+    return [
+      _heading(
+        context,
+        'Connection saved',
+        'Wi-Fi updated',
+        '“${device.name}” has joined ${_ssid.text.trim()}.',
+      ),
+      const SizedBox(height: 28),
+      const Center(child: ApplianceArt(preset: 'board', on: true, size: 180)),
+      const SizedBox(height: 24),
+      _preparationRow(context, Icons.wifi_rounded, _ssid.text.trim()),
+      const SizedBox(height: 10),
+      _preparationRow(context, Icons.router_outlined, device.ip),
+      const SizedBox(height: 20),
+      const InfoPanel(
+        text:
+            'Your board name, room, relay names, icons, and last-set states are preserved. No relay commands were sent.',
+      ),
+      if (device.reachability != Reachability.online) ...[
+        const SizedBox(height: 12),
+        const InfoPanel(
+          text:
+              'The board replied to setup, but its control port is not reachable yet. Check the connection once it finishes starting.',
+          warning: true,
+        ),
+      ],
+      const SizedBox(height: 28),
+      FilledButton(
+        onPressed: () => Navigator.of(context).pop(),
+        child: const Text('Done'),
+      ),
+    ];
+  }
 }

@@ -1,5 +1,17 @@
 # Validation
 
+## Wi-Fi migration update — 1.0.2 (3), 2026-11-14
+
+- `flutter analyze --no-pub`: no issues.
+- `flutter test --no-pub --timeout=45s --dart-define=CAPTURE_SCREENS=true --update-goldens`: all 43 tests passed.
+- Final `flutter build apk --release --no-pub`: succeeded; APK Signature Scheme v2 verified.
+- `dist/relay-home-1.0.2.apk`: 68,469,229 bytes; SHA-256 `01079153a28b091f25b5fef3e738e523fc3bd815df388baeb22e7c568bca9b62`. APK/checksum are ignored local build outputs.
+- Installed with `adb install -r` on the vivo V2045. Android reports version 1.0.2 / code 3; cold launch returned `Status: ok`. USB disconnected before the on-device menu inspection could finish; menu and migration-flow validation is covered by widget tests below.
+- The full Home-menu migration flow was checked again after pinning Continue to the bottom of the prepare screen. New prepare/completion screenshots were rendered and visually inspected at 390 × 844.
+- Widget tests cover migration from an offline Home card, the device-screen menu, explicit response selection for a board without a saved MAC, another board replying, timeout, and cancellation followed by a late response. Successful migration goes directly to completion instead of personalization.
+- Controller tests verify preservation of the existing device ID, names, room, icons, custom image paths, command timestamps, states and uncertainty through JSON persistence. They also check mismatched identities, unverified responses, changed phone Wi-Fi, duplicate destinations, and failed local storage. No migration test sends a relay command.
+- The flow uses the existing classic ESPTouch implementation. Hardware pairing was previously confirmed by the user; moving a physical board to a different Wi-Fi has not been exercised in this update's validation.
+
 ## Responsiveness update — 1.0.1 (2), 2026-11-14
 
 - `flutter analyze --no-pub`: no issues.

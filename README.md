@@ -23,6 +23,21 @@ For a board already on Wi-Fi, choose **Find an existing device**, or enter its l
 
 First launch is an empty real home. **Settings → Demo home** opens sample devices and simulated switches stored separately. Switching demo mode never replaces real saved devices. Demo setup and discovery are also simulated and labeled.
 
+## Move a saved board to another Wi-Fi
+
+1. Connect the phone to the new **2.4 GHz Wi-Fi** network.
+2. Open the saved board's **⋮ → Move to current Wi-Fi** menu on Home or its controls screen. The option is available when the board is offline; the offline controls screen also has a direct shortcut.
+3. Put that physical board in pairing mode, then tap **Continue**.
+4. Confirm the phone's current network name, enter its password, and tap **Move board**. The password is used only for this setup attempt.
+5. A pairing reply matching the saved MAC address updates the existing board automatically. If the board was originally added by IP and has no saved MAC, select its response first. The completion screen shows the new IP address.
+
+The existing device ID, board/relay names, room, icons, custom photos, and last-set relay history are preserved. No new board is created and no On/Off commands are replayed. A reply from a different MAC, cancellation, timeout, or a failed local save leaves the old record intact. Pair one board at a time. If a matching board replies before its control port is ready, the new address is saved and the app asks you to check connectivity after it starts.
+
+<p>
+  <img src="docs/screenshots/move-wifi-prepare.png" width="240" alt="Move a saved board to the phone's current Wi-Fi, with pairing instructions and Continue">
+  <img src="docs/screenshots/move-wifi-complete.png" width="240" alt="Wi-Fi updated confirmation with new network and IP address">
+</p>
+
 ## What the states mean
 
 This board's documented stock protocol has no relay-state query or physical acknowledgement. **Last set On/Off** is the last command the app sent; it does not prove the contacts moved. A channel with no command history is **Unknown**. A write that fails after it starts is **Uncertain**.
@@ -70,7 +85,7 @@ Presets: switch, computer, laptop, TV, bulb, table lamp, wall light, ceiling lig
 
 ## Verification
 
-Static analysis is clean and all 33 automated tests pass. See `docs/VALIDATION.md` for build, installation, hardware evidence, and limits. Tests include immediate visual feedback and failure rollback on both control screens, transient versus saved state, background socket cleanup, connection reuse, ordered commands, and disposal/disconnection handling.
+Static analysis is clean and all 43 automated tests pass. See `docs/VALIDATION.md` for build, installation, hardware evidence, and limits. Tests include immediate visual feedback and failure rollback on both control screens, transient versus saved state, background socket cleanup, connection reuse, ordered commands, disposal/disconnection handling, and saved-board Wi-Fi migration with identity matching and history preservation.
 
 ## Develop
 
