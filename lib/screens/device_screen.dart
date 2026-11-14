@@ -395,6 +395,10 @@ class _DeviceScreenState extends State<DeviceScreen> {
                       device.id,
                       relay.channel,
                     ),
+                    pendingState: widget.controller.pendingRelayState(
+                      device.id,
+                      relay.channel,
+                    ),
                     onChanged: busy ? null : (value) => _send(relay, value),
                     onEdit: busy ? null : () => _editRelay(relay),
                   ),

@@ -193,13 +193,49 @@ void main() {
     expect(controller.isDeviceBusy('real-board'), true);
     expect(controller.isSending('real-board', 1), true);
     expect(controller.isSending('real-board', 4), false);
+    expect(controller.pendingRelayState('real-board', 1), true);
+    expect(controller.pendingRelayState('real-board', 2), isNull);
     final conflict = await controller.toggleRelay('real-board', 2, true);
     expect(conflict.success, false);
     expect(transport.sends.length, 1);
     transport.gate!.complete();
     await first;
     expect(controller.isSending('real-board', 1), false);
+    expect(controller.pendingRelayState('real-board', 1), isNull);
   });
+  for (final result in [
+    const CommandResult(success: true, message: 'Sent'),
+    const CommandResult(success: false, message: 'Not connected'),
+    const CommandResult(
+      success: false,
+      uncertain: true,
+      message: 'Interrupted',
+    ),
+  ]) {
+    test(
+      'optimistic state is transient until send resolves: ${result.message}',
+      () async {
+        await controller.saveDevice(fixture());
+        await controller.toggleRelay('real-board', 1, false);
+        final savedBefore = storage.values['real_devices_v1'];
+        transport.gate = Completer<void>();
+        transport.next = result;
+        final operation = controller.toggleRelay('real-board', 1, true);
+        expect(controller.pendingRelayState('real-board', 1), true);
+        expect(controller.devices.single.relays.first.lastState, false);
+        expect(storage.values['real_devices_v1'], savedBefore);
+        transport.gate!.complete();
+        await operation;
+        expect(controller.pendingRelayState('real-board', 1), isNull);
+        expect(controller.isDeviceBusy('real-board'), false);
+        final relay = controller.devices.single.relays.first;
+        expect(relay.lastState, result.success);
+        expect(relay.uncertain, result.uncertain);
+        final persisted = decodeDevices(storage.values['real_devices_v1']);
+        expect(persisted.single.relays.first.lastState, result.success);
+      },
+    );
+  }
   test(
     'demo records are isolated and never invoke the real transport',
     () async {

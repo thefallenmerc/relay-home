@@ -25,7 +25,9 @@ First launch is an empty real home. **Settings → Demo home** opens sample devi
 
 ## What the states mean
 
-This board's documented stock protocol has no relay-state query or physical acknowledgement. **Last set On/Off** is the last command the app sent; it does not prove the contacts moved. A channel with no command history is **Unknown**. A connection that fails after sending is **Uncertain**.
+This board's documented stock protocol has no relay-state query or physical acknowledgement. **Last set On/Off** is the last command the app sent; it does not prove the contacts moved. A channel with no command history is **Unknown**. A write that fails after it starts is **Uncertain**.
+
+Switches and appliance artwork respond immediately to a tap. **Setting On/Off…** briefly distinguishes that requested value from saved history. Successful sends update and save **Last set**; a failed send restores the previous display and shows an error (or **Uncertain** if the command may have arrived). Pending visual values are kept only in memory and are never restored as sent commands after restarting the app.
 
 Reopening the app restores names, artwork, rooms, and last-set states, then checks reachability. It never replays commands automatically. **Apply saved states** explicitly sends the known saved values when requested. Hardware restart, other controllers, and wiring to NC instead of NO can make an appliance's actual state differ from the saved command.
 
@@ -45,7 +47,9 @@ Client isolation, a 5 GHz-only network, VPN routing, or a board that is not in p
 
 `lib/screens` renders the flow and listens to `AppController`. The controller owns device metadata, command state, connection checks, cancellation, and persistence. Native network-change events and app resume refresh connectivity without sending relay commands.
 
-`TcpRelayTransport` opens TCP port **8080**, waits **500 ms**, sends exactly four binary bytes, keeps the connection open for **2 seconds**, then closes it. These timings were confirmed using a Python client with the board used during development:
+`TcpRelayTransport` opens TCP port **8080**, waits **500 ms** for a new connection to settle, and sends exactly four binary bytes. Once the socket write is flushed, the controller updates its saved command and releases the controls. The connection stays open in the background for **2 seconds after the last write**, preserving the hold-open interval confirmed using the Python client. Follow-up commands within that interval reuse the settled connection and restart its idle timer; the UI never waits for that timer. TCP_NODELAY is enabled for these small frames.
+
+Flush completion means the socket sink accepted the buffered bytes, not that the board acknowledged them ([Dart I/O documentation](https://api.dart.dev/dart-io/IOSink/flush.html)). Normal peer closure after a completed write retires the connection; it does not trigger a retry or change the last-sent value.
 
 ```
 [0xA0, channel, state, (0xA0 + channel + state) & 0xFF]
@@ -54,7 +58,7 @@ state:   1 = ON, 0 = OFF
 relay 1 ON: A0 01 01 A2
 ```
 
-Commands cannot overlap on a board. A failure never causes an automatic retry. Reachability probes open and close TCP with no payload. Discovery uses the actual Wi-Fi subnet, bounded concurrency, cancellation, and a maximum of 4094 hosts. Wider networks use manual IP entry. No device is silently rebound merely because an address has an open port.
+Commands cannot overlap on a board; the transport also serializes writes per address/port. A failure never causes an automatic retry. Reachability checks reuse a currently open control connection or open and close a probe with no payload. Discovery uses the actual Wi-Fi subnet, bounded concurrency, cancellation, and a maximum of 4094 hosts. Wider networks use manual IP entry. No device is silently rebound merely because an address has an open port.
 
 Local storage uses separate JSON records for real and demo devices, plus theme/demo preferences. Stable local IDs and available provisioning MACs identify records; IP addresses are mutable. Saved objects include four channels, display names, artwork keys/file references, last command values, uncertainty, and timestamps. Reachability is rechecked rather than persisted as live truth. Custom images are copied from Android's photo picker into the app's private documents directory.
 
@@ -66,7 +70,7 @@ Presets: switch, computer, laptop, TV, bulb, table lamp, wall light, ceiling lig
 
 ## Verification
 
-Static analysis is clean, all 24 automated tests pass, and the release APK builds and passes signature verification. See `docs/VALIDATION.md` for evidence and limits. Emulator runtime testing was blocked by available disk space; physical pairing and switching still need the Android phone and board.
+Static analysis is clean and all 33 automated tests pass. See `docs/VALIDATION.md` for build, installation, hardware evidence, and limits. Tests include immediate visual feedback and failure rollback on both control screens, transient versus saved state, background socket cleanup, connection reuse, ordered commands, and disposal/disconnection handling.
 
 ## Develop
 

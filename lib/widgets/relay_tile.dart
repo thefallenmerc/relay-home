@@ -11,6 +11,7 @@ class RelayTile extends StatelessWidget {
     required this.online,
     required this.sending,
     required this.onChanged,
+    this.pendingState,
     this.compact = false,
     this.onEdit,
   });
@@ -18,6 +19,7 @@ class RelayTile extends StatelessWidget {
   final RelayChannel relay;
   final bool online;
   final bool sending;
+  final bool? pendingState;
   final ValueChanged<bool>? onChanged;
   final bool compact;
   final VoidCallback? onEdit;
@@ -27,15 +29,18 @@ class RelayTile extends StatelessWidget {
     final colors = Theme.of(context).colorScheme;
     final text = Theme.of(context).textTheme;
     final dark = Theme.of(context).brightness == Brightness.dark;
-    final on = relay.lastState == true;
+    final on = pendingState ?? (relay.lastState == true);
     final state = relay.uncertain
         ? 'Uncertain'
         : relay.lastState == null
         ? 'Unknown'
-        : on
+        : relay.lastState == true
         ? 'On'
         : 'Off';
-    final active = on && !relay.uncertain;
+    final active = on && (pendingState != null || !relay.uncertain);
+    final status = sending
+        ? 'Setting ${on ? 'On' : 'Off'}…'
+        : 'Last set $state';
     final artwork = SizedBox.square(
       dimension: compact ? 36 : 102,
       child: DecoratedBox(
@@ -139,9 +144,9 @@ class RelayTile extends StatelessWidget {
             children: [
               Expanded(
                 child: Text(
-                  sending ? 'Sending…' : 'Last set $state',
+                  status,
                   style: text.bodySmall?.copyWith(
-                    color: relay.uncertain
+                    color: relay.uncertain && !sending
                         ? colors.error
                         : active
                         ? colors.primary
@@ -150,15 +155,9 @@ class RelayTile extends StatelessWidget {
                   ),
                 ),
               ),
-              if (sending)
-                const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                ),
               Semantics(
                 label:
-                    '${relay.name}, relay ${relay.channel}, last set $state${online ? '' : ', device offline'}',
+                    '${relay.name}, relay ${relay.channel}, $status${online ? '' : ', device offline'}',
                 child: Switch(
                   value: on,
                   onChanged: online && !sending ? onChanged : null,
@@ -166,9 +165,14 @@ class RelayTile extends StatelessWidget {
                   activeThumbColor: colors.onPrimary,
                   // Disabled switches still communicate the saved value.
                   trackColor: WidgetStateProperty.resolveWith((states) {
+                    if (sending && on) return colors.primary;
                     if (states.contains(WidgetState.disabled) && on) {
                       return colors.primary.withValues(alpha: .45);
                     }
+                    return null;
+                  }),
+                  thumbColor: WidgetStateProperty.resolveWith((states) {
+                    if (sending && on) return colors.onPrimary;
                     return null;
                   }),
                 ),

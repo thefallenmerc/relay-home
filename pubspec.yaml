@@ -1,7 +1,7 @@
 name: relay_home
 description: Local Wi-Fi pairing and four-channel relay control for ESP8266 boards.
 publish_to: 'none'
-version: 1.0.0+1
+version: 1.0.1+2
 
 environment:
   sdk: ^3.10.0

@@ -309,6 +309,10 @@ class _HomeScreenState extends State<HomeScreen> {
                       device.id,
                       relay.channel,
                     ),
+                    pendingState: widget.controller.pendingRelayState(
+                      device.id,
+                      relay.channel,
+                    ),
                     compact: true,
                     onChanged: busy ? null : (on) => _send(device, relay, on),
                   ),

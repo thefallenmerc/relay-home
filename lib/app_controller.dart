@@ -35,6 +35,8 @@ class AppController extends ChangeNotifier {
   String? _networkError;
   int _discoveryGeneration = 0, _networkGeneration = 0;
   final Map<String, int> _busy = {};
+  // Transient visual targets are never written into saved command history.
+  final Map<String, (int, bool)> _pendingTargets = {};
   Future<void> _writes = Future.value();
   StreamSubscription<void>? _networkSubscription;
   Timer? _networkDebounce;
@@ -225,8 +227,13 @@ class AppController extends ChangeNotifier {
   bool isDeviceBusy(String id) =>
       _busy.containsKey('${_demoMode ? 'demo' : 'real'}:$id');
   bool isSending(String id, int channel) {
-    final sending = _busy['${_demoMode ? 'demo' : 'real'}:$id'];
-    return sending == channel || sending == -1;
+    final key = '${_demoMode ? 'demo' : 'real'}:$id';
+    return _busy[key] == channel || _pendingTargets[key]?.$1 == channel;
+  }
+
+  bool? pendingRelayState(String id, int channel) {
+    final pending = _pendingTargets['${_demoMode ? 'demo' : 'real'}:$id'];
+    return pending?.$1 == channel ? pending!.$2 : null;
   }
 
   Future<CommandResult> toggleRelay(String id, int channel, bool on) async {
@@ -251,11 +258,13 @@ class AppController extends ChangeNotifier {
       );
     }
     _busy[key] = channel;
+    _pendingTargets[key] = (channel, on);
     _notify();
     try {
       return await _send(id, channel, on, mode);
     } finally {
       _busy.remove(key);
+      _pendingTargets.remove(key);
       _notify();
     }
   }
@@ -365,6 +374,8 @@ class AppController extends ChangeNotifier {
     _notify();
     try {
       for (final relay in known) {
+        _pendingTargets[key] = (relay.channel, relay.lastState!);
+        _notify();
         final result = await _send(id, relay.channel, relay.lastState!, mode);
         if (!result.success) return result;
       }
@@ -376,6 +387,7 @@ class AppController extends ChangeNotifier {
       );
     } finally {
       _busy.remove(key);
+      _pendingTargets.remove(key);
       _notify();
     }
   }

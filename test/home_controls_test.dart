@@ -6,6 +6,9 @@ import 'package:relay_home/screens/device_screen.dart';
 import 'package:relay_home/screens/home_screen.dart';
 import 'package:relay_home/theme.dart';
 import 'package:relay_home/widgets/relay_tile.dart';
+import 'package:relay_home/widgets/appliance_art.dart';
+import 'dart:async';
+import 'controller_test.dart' as fixtures;
 
 class UiController extends AppController {
   UiController({bool online = true}) : _online = online;
@@ -76,6 +79,55 @@ Widget testApp(Widget child, {double scale = 1}) => MaterialApp(
 );
 
 void main() {
+  for (final detail in [false, true]) {
+    testWidgets(
+      '${detail ? 'device' : 'home'} switch responds before send and reverts on failure',
+      (tester) async {
+        final transport = fixtures.FakeTransport();
+        final controller = AppController(
+          storage: fixtures.MemoryStorage(),
+          transport: transport,
+          networkService: fixtures.FakeNetwork(),
+          provisioning: fixtures.FakeProvisioning(),
+        );
+        addTearDown(controller.dispose);
+        await controller.initialize();
+        await controller.saveDevice(fixtures.fixture());
+        await controller.toggleRelay('real-board', 1, false);
+        await tester.pumpWidget(
+          testApp(
+            detail
+                ? DeviceScreen(controller: controller, deviceId: 'real-board')
+                : HomeScreen(controller: controller),
+          ),
+        );
+        await tester.pumpAndSettle();
+        transport.gate = Completer<void>();
+        transport.next = const CommandResult(
+          success: false,
+          message: 'Could not connect',
+        );
+        await tester.tap(find.byType(Switch).first);
+        await tester.pump();
+        expect(tester.widget<Switch>(find.byType(Switch).first).value, true);
+        final tile = find.byType(RelayTile).first;
+        final art = find.descendant(
+          of: tile,
+          matching: find.byType(ApplianceArt),
+        );
+        expect(tester.widget<ApplianceArt>(art).on, true);
+        expect(find.text('Setting On…'), findsOneWidget);
+        expect(find.byType(CircularProgressIndicator), findsNothing);
+        expect(controller.devices.single.relays.first.lastState, false);
+        transport.gate!.complete();
+        await tester.pumpAndSettle();
+        expect(tester.widget<Switch>(find.byType(Switch).first).value, false);
+        expect(find.text('Last set Off'), findsOneWidget);
+        expect(find.text('Could not connect'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
   testWidgets('offline saved ON remains ON and cannot send', (tester) async {
     bool changed = false;
     await tester.pumpWidget(
